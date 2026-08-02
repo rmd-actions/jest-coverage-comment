@@ -1,5 +1,22 @@
 # Changelog of the Jest Coverage Comment
 
+## [Jest Coverage Comment 1.0.35](https://github.com/MishaKav/jest-coverage-comment/tree/v1.0.35)
+
+**Release Date:** 2026-08-01
+
+#### Changes
+
+- fix broken links to files in coverage report when running Jest with `--changedSince` or `--findRelatedTests` (#89)
+- fix empty coverage report when `report-only-changed-files` is enabled and the report contains a single changed file
+
+## [Jest Coverage Comment 1.0.34](https://github.com/MishaKav/jest-coverage-comment/tree/v1.0.34)
+
+**Release Date:** 2026-06-27
+
+#### Changes
+
+- Bump dev dependencies to latest (`@vercel/ncc` v0.44, `jest-junit` v17, `@types/node` v26, `prettier`, `ts-jest`, and others)
+
 ## [Jest Coverage Comment 1.0.33](https://github.com/MishaKav/jest-coverage-comment/tree/v1.0.33)
 
 **Release Date:** 2026-04-18
