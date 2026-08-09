@@ -69,4 +69,51 @@ describe('multi junit report', () => {
       "
     `)
   })
+
+  test('should show failed tests only for files with failures when enabled', async () => {
+    const result = await getMultipleJunitReport({
+      showFailedTests: true,
+      multipleJunitFiles: [
+        `title1, ${__dirname}/../data/coverage_1/junit.xml`,
+        `title2, ${__dirname}/../data/coverage_1/junit_with_failures.xml`,
+      ],
+    } as never)
+
+    expect(result).toContain(
+      '| title1 | 6 | 0 :zzz: | 0 :x: | 0 :fire: | 0.732s :stopwatch: |'
+    )
+    expect(result).toContain(
+      '| title2 | 6 | 1 :zzz: | 2 :x: | 1 :fire: | 0.852s :stopwatch: |'
+    )
+    expect(result).not.toContain('Failed Tests — title1')
+    expect(result).toContain(
+      '<details><summary>:x: Failed Tests — title2 (<b>3</b>)</summary>'
+    )
+    expect(result).toContain(
+      '<b>should test Service</b> › when #list method fails'
+    )
+
+    const disabled = await getMultipleJunitReport({
+      multipleJunitFiles: [
+        `title1, ${__dirname}/../data/coverage_1/junit_with_failures.xml`,
+      ],
+    } as never)
+    expect(disabled).not.toContain('<details>')
+  })
+
+  test('should apply max-failed-tests as total budget across files', async () => {
+    const result = await getMultipleJunitReport({
+      showFailedTests: true,
+      maxFailedTests: 2,
+      multipleJunitFiles: [
+        `title1, ${__dirname}/../data/coverage_1/junit_with_failures.xml`,
+        `title2, ${__dirname}/../data/coverage_1/junit_with_failures.xml`,
+      ],
+    } as never)
+
+    expect(result).toContain('Failed Tests — title1 (<b>3</b>)')
+    expect(result).toContain('...and 1 more failed tests')
+    expect(result).not.toContain('Failed Tests — title2')
+    expect(result).toContain('_...and 3 more failed tests_')
+  })
 })

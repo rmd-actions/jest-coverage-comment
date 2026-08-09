@@ -2,7 +2,7 @@ import * as core from '@actions/core'
 import { Options } from './types.d'
 import { context } from '@actions/github'
 import { createComment } from './create-comment'
-import { getJunitReport } from './junit'
+import { MAX_FAILED_TESTS, getJunitReport } from './junit'
 import { getCoverageReport } from './coverage'
 import { getSummaryReport } from './summary'
 import { getChangedFiles } from './changed-files'
@@ -35,6 +35,21 @@ async function main(): Promise<void> {
     const junitFile = core.getInput('junitxml-path', {
       required: false,
     })
+    const showFailedTests = core.getBooleanInput('show-failed-tests', {
+      required: false,
+    })
+    const maxFailedTestsInput = core.getInput('max-failed-tests', {
+      required: false,
+    })
+    let maxFailedTests = Number(maxFailedTestsInput)
+    if (!Number.isInteger(maxFailedTests) || maxFailedTests < 1) {
+      if (maxFailedTestsInput) {
+        core.warning(
+          `Invalid "max-failed-tests" input "${maxFailedTestsInput}", should be a positive number. Will use default value`
+        )
+      }
+      maxFailedTests = MAX_FAILED_TESTS
+    }
     const coverageTitle = core.getInput('coverage-title', { required: false })
     const coverageFile = core.getInput('coverage-path', {
       required: false,
@@ -91,6 +106,8 @@ async function main(): Promise<void> {
       issueNumber,
       junitTitle,
       junitFile,
+      showFailedTests,
+      maxFailedTests,
       coverageTitle,
       coverageFile,
       coveragePathPrefix,
@@ -152,10 +169,24 @@ async function main(): Promise<void> {
       finalHtml += summaryHtml
     }
 
+    // `max-failed-tests` is a total budget, shared with multiple-junitxml-files
+    let failedTestsBudget = maxFailedTests
+
     if (options.junitFile) {
       const junit = await getJunitReport(options)
-      const { junitHtml, tests, skipped, failures, errors, time } = junit
+      const {
+        junitHtml,
+        failedTestsHtml,
+        failedTests,
+        tests,
+        skipped,
+        failures,
+        errors,
+        time,
+      } = junit
       finalHtml += junitHtml ? `\n\n${junitHtml}` : ''
+      finalHtml += failedTestsHtml ? `\n\n${failedTestsHtml}` : ''
+      failedTestsBudget = Math.max(0, failedTestsBudget - failedTests.length)
 
       if (junitHtml) {
         core.startGroup(options.junitTitle || 'Junit')
@@ -165,6 +196,7 @@ async function main(): Promise<void> {
         core.info(`errors: ${errors}`)
         core.info(`time: ${time}`)
         core.info(`junitHtml: ${junitHtml}`)
+        core.info(`failedTestsHtml: ${failedTestsHtml}`)
 
         core.setOutput('tests', tests)
         core.setOutput('skipped', skipped)
@@ -172,6 +204,7 @@ async function main(): Promise<void> {
         core.setOutput('errors', errors)
         core.setOutput('time', time)
         core.setOutput('junitHtml', junitHtml)
+        core.setOutput('failedTestsHtml', failedTestsHtml)
         core.endGroup()
       }
     }
@@ -215,7 +248,7 @@ async function main(): Promise<void> {
     }
 
     if (multipleJunitFiles?.length) {
-      const markdown = await getMultipleJunitReport(options)
+      const markdown = await getMultipleJunitReport(options, failedTestsBudget)
       finalHtml += markdown ? `\n\n${markdown}` : ''
     }
 

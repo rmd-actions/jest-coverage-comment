@@ -1,7 +1,8 @@
 import * as core from '@actions/core'
 import { CoverageLine, CoverageReport, Options } from './types.d'
-import { getContentFile, getCoverageColor } from './utils'
+import { getContentFile, getCoverageColor, getFileUrl } from './utils'
 import { parseCoverage, getTotalLine, isFile, isFolder } from './parse-coverage'
+import { fixCoverageFilePaths } from './fix-coverage-paths'
 
 const DEFAULT_COVERAGE: Omit<CoverageReport, 'coverageHtml'> = {
   coverage: 0,
@@ -75,12 +76,12 @@ function toTable(coverageArr: CoverageLine[], options: Options): string {
         return changedFiles?.all.some((c) => c.includes(line.file))
       })
       // Filter folders without files
-      .filter((_line, _i, arr) => {
+      .filter((line, _i, arr) => {
         if (!reportOnlyChangedFiles) {
           return true
         }
 
-        return arr.length > 1
+        return isFile(line) || arr.some(isFile)
       })
       .map((line) => toRow(line, isFile(line), options))
     rows.push(...files)
@@ -129,16 +130,9 @@ function toFileNameTd(
   indent = false,
   options: Options
 ): string {
-  const {
-    serverUrl = 'https://github.com',
-    repository,
-    prefix,
-    commit,
-    coveragePathPrefix,
-    removeLinksToFiles,
-  } = options
+  const { prefix, coveragePathPrefix = '', removeLinksToFiles } = options
   const relative = line.file.replace(prefix, '')
-  const href = `${serverUrl}/${repository}/blob/${commit}/${coveragePathPrefix}${relative}`
+  const href = getFileUrl(options, `${coveragePathPrefix}${relative}`)
   const parts = relative.split('/')
   const last = parts[parts.length - 1]
   const space = indent ? '&nbsp; &nbsp;' : ''
@@ -156,17 +150,15 @@ function toMissingTd(line: CoverageLine, options: Options): string {
 
   return line.uncoveredLines
     .map((range) => {
-      const {
-        serverUrl = 'https://github.com',
-        repository,
-        commit,
-        coveragePathPrefix,
-        removeLinksToLines,
-      } = options
+      const { prefix, coveragePathPrefix = '', removeLinksToLines } = options
       const [start, end = start] = range.split('-')
       const fragment = start === end ? `L${start}` : `L${start}-L${end}`
-      const relative = line.file
-      const href = `${serverUrl}/${repository}/blob/${commit}/${coveragePathPrefix}${relative}#${fragment}`
+      const relative = line.file.replace(prefix, '')
+      const href = getFileUrl(
+        options,
+        `${coveragePathPrefix}${relative}`,
+        `#${fragment}`
+      )
       const text = start === end ? start : `${start}&ndash;${end}`
 
       return removeLinksToLines ? text : `<a href="${href}">${text}</a>`
@@ -205,7 +197,7 @@ export function getCoverageReport(options: Options): CoverageReport {
     }
 
     const txtContent = getContentFile(coverageFile)
-    const coverageArr = parseCoverage(txtContent)
+    const coverageArr = fixCoverageFilePaths(parseCoverage(txtContent), options)
 
     if (coverageArr) {
       const coverage = getCoverage(coverageArr)

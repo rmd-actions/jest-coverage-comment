@@ -225,6 +225,7 @@ exports.getCoverageReport = getCoverageReport;
 const core = __importStar(__nccwpck_require__(7484));
 const utils_1 = __nccwpck_require__(9277);
 const parse_coverage_1 = __nccwpck_require__(4218);
+const fix_coverage_paths_1 = __nccwpck_require__(6635);
 const DEFAULT_COVERAGE = {
     coverage: 0,
     color: 'red',
@@ -280,11 +281,11 @@ function toTable(coverageArr, options) {
             return changedFiles?.all.some((c) => c.includes(line.file));
         })
             // Filter folders without files
-            .filter((_line, _i, arr) => {
+            .filter((line, _i, arr) => {
             if (!reportOnlyChangedFiles) {
                 return true;
             }
-            return arr.length > 1;
+            return (0, parse_coverage_1.isFile)(line) || arr.some(parse_coverage_1.isFile);
         })
             .map((line) => toRow(line, (0, parse_coverage_1.isFile)(line), options));
         rows.push(...files);
@@ -317,9 +318,9 @@ function toTotalRow(line) {
 }
 /** Make fileName cell - td. */
 function toFileNameTd(line, indent = false, options) {
-    const { serverUrl = 'https://github.com', repository, prefix, commit, coveragePathPrefix, removeLinksToFiles, } = options;
+    const { prefix, coveragePathPrefix = '', removeLinksToFiles } = options;
     const relative = line.file.replace(prefix, '');
-    const href = `${serverUrl}/${repository}/blob/${commit}/${coveragePathPrefix}${relative}`;
+    const href = (0, utils_1.getFileUrl)(options, `${coveragePathPrefix}${relative}`);
     const parts = relative.split('/');
     const last = parts[parts.length - 1];
     const space = indent ? '&nbsp; &nbsp;' : '';
@@ -334,11 +335,11 @@ function toMissingTd(line, options) {
     }
     return line.uncoveredLines
         .map((range) => {
-        const { serverUrl = 'https://github.com', repository, commit, coveragePathPrefix, removeLinksToLines, } = options;
+        const { prefix, coveragePathPrefix = '', removeLinksToLines } = options;
         const [start, end = start] = range.split('-');
         const fragment = start === end ? `L${start}` : `L${start}-L${end}`;
-        const relative = line.file;
-        const href = `${serverUrl}/${repository}/blob/${commit}/${coveragePathPrefix}${relative}#${fragment}`;
+        const relative = line.file.replace(prefix, '');
+        const href = (0, utils_1.getFileUrl)(options, `${coveragePathPrefix}${relative}`, `#${fragment}`);
         const text = start === end ? start : `${start}&ndash;${end}`;
         return removeLinksToLines ? text : `<a href="${href}">${text}</a>`;
     })
@@ -366,7 +367,7 @@ function getCoverageReport(options) {
             return { ...DEFAULT_COVERAGE, coverageHtml: '' };
         }
         const txtContent = (0, utils_1.getContentFile)(coverageFile);
-        const coverageArr = (0, parse_coverage_1.parseCoverage)(txtContent);
+        const coverageArr = (0, fix_coverage_paths_1.fixCoverageFilePaths)((0, parse_coverage_1.parseCoverage)(txtContent), options);
         if (coverageArr) {
             const coverage = getCoverage(coverageArr);
             const coverageHtml = coverageToMarkdown(coverageArr, options);
@@ -452,6 +453,9 @@ async function createComment(options, body) {
             }
             if (!options.removeLinksToLines) {
                 warningsArr.push('- Add "remove-links-to-lines: true" - to remove links to lines');
+            }
+            if (options.showFailedTests && body.includes(':x: Failed Tests')) {
+                warningsArr.push('- Reduce "max-failed-tests" - to show fewer failed tests in report');
             }
             core.warning(warningsArr.join('\n'));
         }
@@ -565,6 +569,157 @@ async function createComment(options, body) {
 
 /***/ }),
 
+/***/ 6635:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.exportedForTesting = void 0;
+exports.fixCoverageFilePaths = fixCoverageFilePaths;
+const core = __importStar(__nccwpck_require__(7484));
+const fs_1 = __nccwpck_require__(9896);
+const utils_1 = __nccwpck_require__(9277);
+const parse_coverage_1 = __nccwpck_require__(4218);
+/** Get parent directory of a file path ('' when there is none). */
+function parentDir(filePath) {
+    return filePath.split('/').slice(0, -1).join('/');
+}
+/** Extract repo-relative file paths from coverage-summary.json content. */
+function getPathCandidates(jsonContent, prefix) {
+    if (!jsonContent || !prefix) {
+        return [];
+    }
+    const dirPrefix = prefix.endsWith('/') ? prefix : `${prefix}/`;
+    try {
+        const json = JSON.parse(jsonContent);
+        return Object.keys(json)
+            .filter((key) => key !== 'total' && key.startsWith(dirPrefix))
+            .map((key) => key.slice(dirPrefix.length));
+    }
+    catch (error) {
+        if (error instanceof Error) {
+            core.warning(`Parse summary report for coverage paths. ${error.message}`);
+        }
+    }
+    return [];
+}
+/** Find the only candidate that ends with the truncated path, if any. */
+function matchCandidate(file, candidates) {
+    if (candidates.includes(file)) {
+        return null;
+    }
+    const matches = candidates.filter((c) => c.endsWith(`/${file}`));
+    return matches.length === 1 ? matches[0] : null;
+}
+/** Restore parent directories stripped by istanbul's text reporter. */
+function restorePaths(coverageArr, candidates) {
+    const fixedFiles = new Map();
+    const result = coverageArr.map((line) => {
+        if (!(0, parse_coverage_1.isFile)(line)) {
+            return line;
+        }
+        const fixed = matchCandidate(line.file, candidates);
+        if (!fixed) {
+            return line;
+        }
+        fixedFiles.set(line.file, fixed);
+        return { ...line, file: fixed };
+    });
+    return result.map((line) => {
+        if (!(0, parse_coverage_1.isFolder)(line) || line.file === 'All files') {
+            return line;
+        }
+        for (const [original, fixed] of fixedFiles) {
+            if (parentDir(original) === line.file) {
+                return { ...line, file: parentDir(fixed) };
+            }
+        }
+        return line;
+    });
+}
+/**
+ * Fix truncated paths produced by `jest --changedSince` / `--findRelatedTests`.
+ * Istanbul's text reporter strips the common parent directory of all covered
+ * files, so restore it from the full paths in coverage-summary.json.
+ */
+function fixCoverageFilePaths(coverageArr, options) {
+    const { summaryFile, prefix, coveragePathPrefix } = options;
+    if (coveragePathPrefix || !prefix || !summaryFile) {
+        return coverageArr;
+    }
+    try {
+        if (!(0, fs_1.existsSync)((0, utils_1.getPathToFile)(summaryFile))) {
+            return coverageArr;
+        }
+        const jsonContent = (0, utils_1.getContentFile)(summaryFile);
+        const candidates = getPathCandidates(jsonContent, prefix);
+        if (!candidates.length) {
+            return coverageArr;
+        }
+        const result = restorePaths(coverageArr, candidates);
+        const restored = result.filter((l, i) => l.file !== coverageArr[i].file);
+        if (restored.length) {
+            core.info(`Restored ${restored.length} coverage path(s) from '${summaryFile}'`);
+        }
+        const unresolved = result.filter((line) => (0, parse_coverage_1.isFile)(line) && !candidates.includes(line.file));
+        if (unresolved.length) {
+            core.warning(`Could not restore coverage path(s): ${unresolved
+                .map((line) => line.file)
+                .join(', ')}`);
+        }
+        return result;
+    }
+    catch (error) {
+        if (error instanceof Error) {
+            core.warning(`Restoring coverage paths. ${error.message}`);
+        }
+    }
+    return coverageArr;
+}
+exports.exportedForTesting = {
+    parentDir,
+    getPathCandidates,
+    matchCandidate,
+    restorePaths,
+};
+
+
+/***/ }),
+
 /***/ 1188:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -638,6 +793,19 @@ async function main() {
         const junitFile = core.getInput('junitxml-path', {
             required: false,
         });
+        const showFailedTests = core.getBooleanInput('show-failed-tests', {
+            required: false,
+        });
+        const maxFailedTestsInput = core.getInput('max-failed-tests', {
+            required: false,
+        });
+        let maxFailedTests = Number(maxFailedTestsInput);
+        if (!Number.isInteger(maxFailedTests) || maxFailedTests < 1) {
+            if (maxFailedTestsInput) {
+                core.warning(`Invalid "max-failed-tests" input "${maxFailedTestsInput}", should be a positive number. Will use default value`);
+            }
+            maxFailedTests = junit_1.MAX_FAILED_TESTS;
+        }
         const coverageTitle = core.getInput('coverage-title', { required: false });
         const coverageFile = core.getInput('coverage-path', {
             required: false,
@@ -685,6 +853,8 @@ async function main() {
             issueNumber,
             junitTitle,
             junitFile,
+            showFailedTests,
+            maxFailedTests,
             coverageTitle,
             coverageFile,
             coveragePathPrefix,
@@ -740,10 +910,14 @@ async function main() {
         if (!options.hideSummary) {
             finalHtml += summaryHtml;
         }
+        // `max-failed-tests` is a total budget, shared with multiple-junitxml-files
+        let failedTestsBudget = maxFailedTests;
         if (options.junitFile) {
             const junit = await (0, junit_1.getJunitReport)(options);
-            const { junitHtml, tests, skipped, failures, errors, time } = junit;
+            const { junitHtml, failedTestsHtml, failedTests, tests, skipped, failures, errors, time, } = junit;
             finalHtml += junitHtml ? `\n\n${junitHtml}` : '';
+            finalHtml += failedTestsHtml ? `\n\n${failedTestsHtml}` : '';
+            failedTestsBudget = Math.max(0, failedTestsBudget - failedTests.length);
             if (junitHtml) {
                 core.startGroup(options.junitTitle || 'Junit');
                 core.info(`tests: ${tests}`);
@@ -752,12 +926,14 @@ async function main() {
                 core.info(`errors: ${errors}`);
                 core.info(`time: ${time}`);
                 core.info(`junitHtml: ${junitHtml}`);
+                core.info(`failedTestsHtml: ${failedTestsHtml}`);
                 core.setOutput('tests', tests);
                 core.setOutput('skipped', skipped);
                 core.setOutput('failures', failures);
                 core.setOutput('errors', errors);
                 core.setOutput('time', time);
                 core.setOutput('junitHtml', junitHtml);
+                core.setOutput('failedTestsHtml', failedTestsHtml);
                 core.endGroup();
             }
         }
@@ -788,7 +964,7 @@ async function main() {
             finalHtml += `\n\n${(0, multi_files_1.getMultipleReport)(options)}`;
         }
         if (multipleJunitFiles?.length) {
-            const markdown = await (0, multi_junit_files_1.getMultipleJunitReport)(options);
+            const markdown = await (0, multi_junit_files_1.getMultipleJunitReport)(options, failedTestsBudget);
             finalHtml += markdown ? `\n\n${markdown}` : '';
         }
         if (!finalHtml || options.hideComment) {
@@ -848,15 +1024,163 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.MAX_FAILED_TESTS = void 0;
+exports.moreFailedTestsNote = moreFailedTestsNote;
 exports.parseJunit = parseJunit;
 exports.junitToMarkdown = junitToMarkdown;
+exports.failedTestsToMarkdown = failedTestsToMarkdown;
 exports.getJunitReport = getJunitReport;
 /* eslint-disable  @typescript-eslint/no-explicit-any */
 const core = __importStar(__nccwpck_require__(7484));
 const xml2js = __importStar(__nccwpck_require__(758));
 const utils_1 = __nccwpck_require__(9277);
+const MAX_FAILURE_MESSAGE_LENGTH = 500;
+const MAX_FAILURE_MESSAGE_LINES = 15;
+const MAX_REASON_LENGTH = 120;
+const MAX_TEST_NAME_LENGTH = 255;
+exports.MAX_FAILED_TESTS = 30;
+const ABSOLUTE_PATH_REGEX = /^(\/|[A-Za-z]:\/)/;
+// Guard memory on huge failure outputs, rendering truncates far below this
+const MAX_STORED_MESSAGE_LENGTH = 10000;
+const STACK_FRAME_REGEX = /^\s+at\s/;
+const TEST_FILE_REGEX = /(__tests__[\\/]|\.(test|spec)\.[cm]?[jt]sx?$)/;
+/** Escape characters that are unsafe inside generated html. */
+function escapeHtml(text) {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+/**
+ * Extract texts from <failure> or <error> node.
+ * xml2js parses a node without attributes to a plain string,
+ * otherwise to `{ $: { message }, _: 'body text' }` (both parts optional).
+ */
+function getNodeTexts(node) {
+    // Strip leading blank lines only, keeping first-line indentation,
+    // so a body holding only an indented stack trace keeps its frame shape
+    const trimBody = (text) => {
+        const body = text?.replace(/^(?:[ \t]*\r?\n)+/, '').trimEnd();
+        return body?.trim() ? body : undefined;
+    };
+    if (typeof node === 'string') {
+        return [trimBody(node)].filter(Boolean);
+    }
+    return [node?.$?.message, trimBody(node?._)].filter(Boolean);
+}
+/** Truncate text with ellipsis when it exceeds the given length. */
+function truncateText(text, maxLength) {
+    return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
+}
+/** Encode url-reserved characters in each path segment, keep `/` separators. */
+function encodePath(path) {
+    return path.split('/').map(encodeURIComponent).join('/');
+}
+/** Remove stack-trace frame lines from failure text. */
+function stripStackFrames(text) {
+    return text
+        .split(/\r?\n/)
+        .filter((line) => !STACK_FRAME_REGEX.test(line))
+        .map((line) => line.trimEnd())
+        .join('\n')
+        .trim();
+}
+/**
+ * Extract message from <failure> or <error> node texts, the most
+ * detailed text after removing stack frames wins, so a short message
+ * attribute is preferred over a body holding only the stack trace.
+ */
+function getFailureMessage(texts) {
+    const meaningful = texts.map(stripStackFrames).filter(Boolean);
+    const candidates = meaningful.length ? meaningful : texts;
+    return candidates.reduce((longest, text) => text.length > longest.length ? text : longest, '');
+}
+/** Note about failed tests that were omitted from the report. */
+function moreFailedTestsNote(count) {
+    return `_...and ${count} more failed tests_`;
+}
+/** Strip stack-trace frames and generic `Error:` prefix from failure message, cap length and number of lines. */
+function formatFailureMessage(message) {
+    let text = truncateText(stripStackFrames(message).replace(/^Error:\s*/, ''), MAX_FAILURE_MESSAGE_LENGTH);
+    // A node holding only a stack trace strips to nothing, show the trace then
+    if (!text) {
+        text = truncateText(message.trim(), MAX_FAILURE_MESSAGE_LENGTH);
+    }
+    const lines = text.split('\n');
+    if (lines.length > MAX_FAILURE_MESSAGE_LINES) {
+        text = `${lines.slice(0, MAX_FAILURE_MESSAGE_LINES).join('\n')}\n…`;
+    }
+    return text;
+}
+/**
+ * Extract short one-line reason from failure message:
+ * the `Expected/Received` pair, the first changed diff pair,
+ * or the first meaningful line.
+ */
+function extractShortReason(message) {
+    const lines = message
+        .split('\n')
+        .map((line) => line.trim().replace(/\s+/g, ' ').replace(/,$/, ''))
+        .filter(Boolean);
+    const expected = lines.find((line) => line.startsWith('Expected: '));
+    const received = lines.find((line) => line.startsWith('Received: '));
+    const removed = lines.find((line) => line.startsWith('- ') && !line.startsWith('- Expected'));
+    const added = lines.find((line) => line.startsWith('+ ') && !line.startsWith('+ Received'));
+    let reason = '';
+    if (expected && received) {
+        reason = `${expected} · ${received}`;
+    }
+    else if (removed && added) {
+        reason = `${removed} · ${added}`;
+    }
+    else {
+        const firstLine = lines.find((line) => !line.startsWith('expect(')) ?? lines[0] ?? '';
+        reason = firstLine.startsWith('thrown: ')
+            ? firstLine.replace(/^thrown: "?/, '').replace(/"$/, '')
+            : firstLine;
+    }
+    return truncateText(reason, MAX_REASON_LENGTH);
+}
+/**
+ * Wrap failure message in a fenced `diff` code block, so jest
+ * `- Expected` / `+ Received` lines get red/green highlighting.
+ * The fence is extended when the message itself contains backtick runs.
+ */
+function messageToDiffBlock(message) {
+    const backtickRuns = message.match(/`+/g) ?? [];
+    const longestRun = Math.max(0, ...backtickRuns.map((run) => run.length));
+    const fence = '`'.repeat(Math.max(3, longestRun + 1));
+    return `${fence}diff\n${message}\n${fence}`;
+}
+/**
+ * Extract test file location from the first own stack-trace frame
+ * in the failure text (has the line number), falling back to the
+ * `file` attribute of jest-junit `addFileAttribute` option.
+ */
+function getTestLocation(tc, rawTexts) {
+    const frames = [];
+    for (const rawText of rawTexts) {
+        for (const textLine of rawText.split(/\r?\n/)) {
+            if (!STACK_FRAME_REGEX.test(textLine) ||
+                textLine.includes('node_modules')) {
+                continue;
+            }
+            const match = textLine.match(/\((.*):(\d+):(\d+)\)$/) ??
+                textLine.match(/\bat\s(.+):(\d+):(\d+)$/);
+            if (match) {
+                frames.push({ file: match[1], line: Number(match[2]) });
+            }
+        }
+    }
+    // A failure can be thrown inside an app helper, prefer the test file frame
+    const testFrame = frames.find((frame) => TEST_FILE_REGEX.test(frame.file));
+    if (testFrame) {
+        return testFrame;
+    }
+    if (tc.$?.file) {
+        return { file: tc.$.file };
+    }
+    return frames[0] ?? {};
+}
 /** Parse junit.xml to Junit object */
-async function parseJunit(xmlContent) {
+async function parseJunit(xmlContent, collectFailedTests = true) {
     try {
         if (!xmlContent) {
             core.warning('JUnit XML was not provided');
@@ -885,12 +1209,31 @@ async function parseJunit(xmlContent) {
         const skipped = testsuites
             ?.map((t) => Number(t['$'].skipped))
             .reduce((sum, a) => sum + a, 0) || 0;
+        const failedTests = collectFailedTests
+            ? (testsuites?.flatMap((t) => (t.testcase ?? [])
+                .filter((tc) => tc.failure || tc.error)
+                .map((tc) => {
+                const nodes = [...(tc.failure ?? []), ...(tc.error ?? [])];
+                const nodeTexts = nodes.map(getNodeTexts);
+                return {
+                    suiteName: t.$?.name ?? '',
+                    testName: tc.$?.name ?? '',
+                    message: nodeTexts
+                        .map(getFailureMessage)
+                        .filter(Boolean)
+                        .join('\n')
+                        .slice(0, MAX_STORED_MESSAGE_LENGTH),
+                    ...getTestLocation(tc, nodeTexts.flat()),
+                };
+            })) ?? [])
+            : [];
         return {
             skipped,
             errors: Number(main.errors || errors),
             failures: Number(main.failures),
             tests: Number(main.tests),
             time: Number(main.time),
+            failedTests,
         };
     }
     catch (error) {
@@ -920,18 +1263,74 @@ ${table}`;
     }
     return table;
 }
+/**
+ * Make test name html for the summary line.
+ * The suite name carries the link to the test file (when known),
+ * the rest of the test name stays plain text.
+ */
+function toTestName(test, options) {
+    const { repository, commit, prefix = '', removeLinksToFiles, removeLinksToLines, } = options;
+    const { suiteName, testName } = test;
+    const hasSuitePrefix = suiteName && testName.startsWith(suiteName);
+    const mainText = truncateText(suiteName || testName, MAX_TEST_NAME_LENGTH);
+    const restText = suiteName && testName !== suiteName
+        ? ` › ${escapeHtml(truncateText(hasSuitePrefix ? testName.slice(suiteName.length).trim() : testName, Math.max(0, MAX_TEST_NAME_LENGTH - mainText.length)))}`
+        : '';
+    const testFile = test.file
+        ?.replace(/^file:\/\/\/([A-Za-z]:\/)/, '$1')
+        .replace(/^file:\/\//, '')
+        .replace(/\\/g, '/');
+    const isAbsolutePath = testFile ? ABSOLUTE_PATH_REGEX.test(testFile) : false;
+    // Absolute stack-trace paths are repo-relative after removing the
+    // workspace prefix, `coverage-path-prefix` applies only to relative ones
+    const relative = testFile && isAbsolutePath && prefix
+        ? testFile.replace(prefix.replace(/\\/g, '/'), '')
+        : testFile;
+    const cannotResolvePath = !relative ||
+        (isAbsolutePath && ABSOLUTE_PATH_REGEX.test(relative)) ||
+        relative.split('/').includes('..');
+    if (!repository || !commit || removeLinksToFiles || cannotResolvePath) {
+        return `<b>${escapeHtml(mainText)}</b>${restText}`;
+    }
+    // `coverage-path-prefix` applies only to paths that are still repo-relative
+    const linkPath = isAbsolutePath
+        ? encodePath(relative)
+        : `${options.coveragePathPrefix ?? ''}${encodePath(relative)}`;
+    const anchor = test.line && !removeLinksToLines ? `#L${test.line}` : '';
+    const href = escapeHtml((0, utils_1.getFileUrl)(options, linkPath, anchor)).replace(/"/g, '&quot;');
+    return `<a href="${href}">${escapeHtml(mainText)}</a>${restText}`;
+}
+/** Convert failed tests to collapsed html table. */
+function failedTestsToMarkdown(failedTests, options, title, maxFailedTests = options.maxFailedTests ?? exports.MAX_FAILED_TESTS) {
+    if (!options.showFailedTests || !failedTests.length) {
+        return '';
+    }
+    const summaryTitle = title ? `Failed Tests — ${title}` : 'Failed Tests';
+    const entries = failedTests.slice(0, maxFailedTests).map((test) => {
+        const message = formatFailureMessage(test.message);
+        const reason = extractShortReason(message);
+        return `<details><summary>${toTestName(test, options)} — <code>${escapeHtml(reason)}</code></summary>\n\n${messageToDiffBlock(message)}\n\n</details>`;
+    });
+    if (failedTests.length > maxFailedTests) {
+        entries.push(moreFailedTestsNote(failedTests.length - maxFailedTests));
+    }
+    return `<details><summary>:x: ${escapeHtml(summaryTitle)} (<b>${failedTests.length}</b>)</summary>\n\n${entries.join('\n')}\n\n</details>`;
+}
 /** Return JUnit report. */
 async function getJunitReport(options) {
     const { junitFile } = options;
     try {
         if (junitFile) {
             const xmlContent = (0, utils_1.getContentFile)(junitFile);
-            const parsedXml = await parseJunit(xmlContent);
+            const parsedXml = await parseJunit(xmlContent, options.showFailedTests);
             if (parsedXml) {
                 const junitHtml = junitToMarkdown(parsedXml, options);
-                const { skipped, errors, failures, tests, time } = parsedXml;
+                const { skipped, errors, failures, tests, time, failedTests } = parsedXml;
+                const failedTestsHtml = failedTestsToMarkdown(failedTests, options);
                 return {
                     junitHtml,
+                    failedTestsHtml,
+                    failedTests,
                     tests,
                     skipped,
                     failures,
@@ -948,6 +1347,8 @@ async function getJunitReport(options) {
     }
     return {
         junitHtml: '',
+        failedTestsHtml: '',
+        failedTests: [],
         tests: 0,
         skipped: 0,
         failures: 0,
@@ -1091,7 +1492,7 @@ const core = __importStar(__nccwpck_require__(7484));
 const junit_1 = __nccwpck_require__(3664);
 const utils_1 = __nccwpck_require__(9277);
 /** Return multiple report in markdown format. */
-async function getMultipleJunitReport(options) {
+async function getMultipleJunitReport(options, maxFailedTests = options.maxFailedTests ?? junit_1.MAX_FAILED_TESTS) {
     const { multipleJunitFiles } = options;
     if (!multipleJunitFiles?.length) {
         return null;
@@ -1105,18 +1506,35 @@ async function getMultipleJunitReport(options) {
         let atLeastOneFileExists = false;
         let table = '| Title | Tests | Skipped | Failures | Errors | Time |\n' +
             '| --- | --- | --- | --- | --- | --- |\n';
+        let failedBlocks = '';
+        // `max-failed-tests` is a total budget across all files
+        let remainingFailedTests = maxFailedTests;
+        let omittedFailedTests = 0;
         for (const titleFileLine of lineReports) {
             const { title, file } = titleFileLine;
             const xmlContent = (0, utils_1.getContentFile)(file);
-            const parsedXml = await (0, junit_1.parseJunit)(xmlContent);
+            const parsedXml = await (0, junit_1.parseJunit)(xmlContent, options.showFailedTests);
             if (parsedXml) {
                 const junitHtml = (0, junit_1.junitToMarkdown)(parsedXml, options, true);
                 table += `| ${title} ${junitHtml}\n`;
                 atLeastOneFileExists = true;
+                if (options.showFailedTests) {
+                    if (remainingFailedTests > 0) {
+                        const failedTestsHtml = (0, junit_1.failedTestsToMarkdown)(parsedXml.failedTests, options, title, remainingFailedTests);
+                        failedBlocks += failedTestsHtml ? `\n\n${failedTestsHtml}` : '';
+                        remainingFailedTests -= parsedXml.failedTests.length;
+                    }
+                    else {
+                        omittedFailedTests += parsedXml.failedTests.length;
+                    }
+                }
             }
         }
+        if (omittedFailedTests > 0) {
+            failedBlocks += `\n\n${(0, junit_1.moreFailedTestsNote)(omittedFailedTests)}`;
+        }
         if (atLeastOneFileExists) {
-            return table;
+            return table + failedBlocks;
         }
     }
     catch (error) {
@@ -1420,12 +1838,18 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parseLine = void 0;
+exports.getFileUrl = getFileUrl;
 exports.getPathToFile = getPathToFile;
 exports.getContentFile = getContentFile;
 exports.getCoverageColor = getCoverageColor;
 exports.notNull = notNull;
 const core = __importStar(__nccwpck_require__(7484));
 const fs_1 = __nccwpck_require__(9896);
+/** Build URL to a file in the repository at the reported commit. */
+function getFileUrl(options, relativePath, anchor = '') {
+    const { serverUrl = 'https://github.com', repository, commit } = options;
+    return `${serverUrl}/${repository}/blob/${commit}/${relativePath}${anchor}`;
+}
 function getPathToFile(pathToFile) {
     if (!pathToFile) {
         return '';
@@ -11504,7 +11928,6 @@ function defaultFactory (origin, opts) {
 
 class Agent extends DispatcherBase {
   constructor ({ factory = defaultFactory, maxRedirections = 0, connect, ...options } = {}) {
-
     if (typeof factory !== 'function') {
       throw new InvalidArgumentError('factory must be a function.')
     }
@@ -11892,6 +12315,9 @@ const EMPTY_BUF = Buffer.alloc(0)
 const FastBuffer = Buffer[Symbol.species]
 const addListener = util.addListener
 const removeAllListeners = util.removeAllListeners
+const kIdleSocketValidation = Symbol('kIdleSocketValidation')
+const kIdleSocketValidationTimeout = Symbol('kIdleSocketValidationTimeout')
+const kSocketUsed = Symbol('kSocketUsed')
 
 let extractBody
 
@@ -12114,27 +12540,69 @@ class Parser {
 
       const offset = llhttp.llhttp_get_error_pos(this.ptr) - currentBufferPtr
 
-      if (ret === constants.ERROR.PAUSED_UPGRADE) {
-        this.onUpgrade(data.slice(offset))
-      } else if (ret === constants.ERROR.PAUSED) {
-        this.paused = true
-        socket.unshift(data.slice(offset))
-      } else if (ret !== constants.ERROR.OK) {
-        const ptr = llhttp.llhttp_get_error_reason(this.ptr)
-        let message = ''
-        /* istanbul ignore else: difficult to make a test case for */
-        if (ptr) {
-          const len = new Uint8Array(llhttp.memory.buffer, ptr).indexOf(0)
-          message =
-            'Response does not match the HTTP/1.1 protocol (' +
-            Buffer.from(llhttp.memory.buffer, ptr, len).toString() +
-            ')'
+      if (ret !== constants.ERROR.OK) {
+        const body = data.subarray(offset)
+
+        if (ret === constants.ERROR.PAUSED_UPGRADE) {
+          this.onUpgrade(body)
+        } else if (ret === constants.ERROR.PAUSED) {
+          this.paused = true
+          socket.unshift(body)
+        } else {
+          throw this.createError(ret, body)
         }
-        throw new HTTPParserError(message, constants.ERROR[ret], data.slice(offset))
       }
     } catch (err) {
       util.destroy(socket, err)
     }
+  }
+
+  finish () {
+    assert(currentParser === null)
+    assert(this.ptr != null)
+    assert(!this.paused)
+
+    const { llhttp } = this
+
+    let ret
+
+    try {
+      currentParser = this
+      ret = llhttp.llhttp_finish(this.ptr)
+    } finally {
+      currentParser = null
+    }
+
+    if (ret === constants.ERROR.OK) {
+      return null
+    }
+
+    if (ret === constants.ERROR.PAUSED || ret === constants.ERROR.PAUSED_UPGRADE) {
+      this.paused = true
+      return null
+    }
+
+    return this.createError(ret, EMPTY_BUF)
+  }
+
+  createError (ret, data) {
+    const { llhttp, contentLength, bytesRead } = this
+
+    if (contentLength && bytesRead !== parseInt(contentLength, 10)) {
+      return new ResponseContentLengthMismatchError()
+    }
+
+    const ptr = llhttp.llhttp_get_error_reason(this.ptr)
+    let message = ''
+    if (ptr) {
+      const len = new Uint8Array(llhttp.memory.buffer, ptr).indexOf(0)
+      message =
+        'Response does not match the HTTP/1.1 protocol (' +
+        Buffer.from(llhttp.memory.buffer, ptr, len).toString() +
+        ')'
+    }
+
+    return new HTTPParserError(message, constants.ERROR[ret], data)
   }
 
   destroy () {
@@ -12161,6 +12629,11 @@ class Parser {
 
     /* istanbul ignore next: difficult to make a test case for */
     if (socket.destroyed) {
+      return -1
+    }
+
+    if (client[kRunning] === 0) {
+      util.destroy(socket, new SocketError('bad response', util.getSocketInfo(socket)))
       return -1
     }
 
@@ -12264,6 +12737,11 @@ class Parser {
 
     /* istanbul ignore next: difficult to make a test case for */
     if (socket.destroyed) {
+      return -1
+    }
+
+    if (client[kRunning] === 0) {
+      util.destroy(socket, new SocketError('bad response', util.getSocketInfo(socket)))
       return -1
     }
 
@@ -12440,6 +12918,7 @@ class Parser {
     request.onComplete(headers)
 
     client[kQueue][client[kRunningIdx]++] = null
+    socket[kSocketUsed] = true
 
     if (socket[kWriting]) {
       assert(client[kRunning] === 0)
@@ -12498,6 +12977,9 @@ async function connectH1 (client, socket) {
   socket[kWriting] = false
   socket[kReset] = false
   socket[kBlocking] = false
+  socket[kIdleSocketValidation] = 0
+  socket[kIdleSocketValidationTimeout] = null
+  socket[kSocketUsed] = false
   socket[kParser] = new Parser(client, socket, llhttpInstance)
 
   addListener(socket, 'error', function (err) {
@@ -12508,8 +12990,11 @@ async function connectH1 (client, socket) {
     // On Mac OS, we get an ECONNRESET even if there is a full body to be forwarded
     // to the user.
     if (err.code === 'ECONNRESET' && parser.statusCode && !parser.shouldKeepAlive) {
-      // We treat all incoming data so for as a valid response.
-      parser.onMessageComplete()
+      const parserErr = parser.finish()
+      if (parserErr) {
+        this[kError] = parserErr
+        this[kClient][kOnError](parserErr)
+      }
       return
     }
 
@@ -12528,8 +13013,10 @@ async function connectH1 (client, socket) {
     const parser = this[kParser]
 
     if (parser.statusCode && !parser.shouldKeepAlive) {
-      // We treat all incoming data so far as a valid response.
-      parser.onMessageComplete()
+      const parserErr = parser.finish()
+      if (parserErr) {
+        util.destroy(this, parserErr)
+      }
       return
     }
 
@@ -12539,10 +13026,11 @@ async function connectH1 (client, socket) {
     const client = this[kClient]
     const parser = this[kParser]
 
+    clearIdleSocketValidation(this)
+
     if (parser) {
       if (!this[kError] && parser.statusCode && !parser.shouldKeepAlive) {
-        // We treat all incoming data so far as a valid response.
-        parser.onMessageComplete()
+        this[kError] = parser.finish() || this[kError]
       }
 
       this[kParser].destroy()
@@ -12605,7 +13093,7 @@ async function connectH1 (client, socket) {
       return socket.destroyed
     },
     busy (request) {
-      if (socket[kWriting] || socket[kReset] || socket[kBlocking]) {
+      if (socket[kWriting] || socket[kReset] || socket[kBlocking] || socket[kIdleSocketValidation] === 1) {
         return true
       }
 
@@ -12643,6 +13131,31 @@ async function connectH1 (client, socket) {
   }
 }
 
+function clearIdleSocketValidation (socket) {
+  if (socket[kIdleSocketValidationTimeout]) {
+    clearTimeout(socket[kIdleSocketValidationTimeout])
+    socket[kIdleSocketValidationTimeout] = null
+  }
+
+  socket[kIdleSocketValidation] = 0
+}
+
+function scheduleIdleSocketValidation (client, socket) {
+  socket[kIdleSocketValidation] = 1
+  socket[kIdleSocketValidationTimeout] = setTimeout(() => {
+    socket[kIdleSocketValidationTimeout] = null
+    socket[kIdleSocketValidation] = 2
+
+    if (client[kSocket] === socket && !socket.destroyed) {
+      client[kResume]()
+    }
+  }, 0)
+  socket[kIdleSocketValidationTimeout].unref?.()
+}
+
+/**
+ * @param {import('./client.js')} client
+ */
 function resumeH1 (client) {
   const socket = client[kSocket]
 
@@ -12655,6 +13168,32 @@ function resumeH1 (client) {
     } else if (socket[kNoRef] && socket.ref) {
       socket.ref()
       socket[kNoRef] = false
+    }
+
+    if (client[kRunning] === 0 && client[kPending] > 0 && socket[kSocketUsed]) {
+      if (socket[kIdleSocketValidation] === 0) {
+        scheduleIdleSocketValidation(client, socket)
+        socket[kParser].readMore()
+        if (socket.destroyed) {
+          return
+        }
+        return
+      }
+
+      if (socket[kIdleSocketValidation] === 1) {
+        socket[kParser].readMore()
+        if (socket.destroyed) {
+          return
+        }
+        return
+      }
+    }
+
+    if (client[kRunning] === 0) {
+      socket[kParser].readMore()
+      if (socket.destroyed) {
+        return
+      }
     }
 
     if (client[kSize] === 0) {
@@ -12750,6 +13289,7 @@ function writeH1 (client, request) {
   }
 
   const socket = client[kSocket]
+  clearIdleSocketValidation(socket)
 
   const abort = (err) => {
     if (request.aborted || request.completed) {
@@ -14622,6 +15162,7 @@ class DispatcherBase extends Dispatcher {
 
   get webSocketOptions () {
     return {
+      maxFragments: this[kWebSocketOptions].maxFragments ?? 131072,
       maxPayloadSize: this[kWebSocketOptions].maxPayloadSize ?? 128 * 1024 * 1024
     }
   }
@@ -20558,32 +21099,25 @@ function parseUnparsedAttributes (unparsedAttributes, cookieAttributeList = {}) 
     // If the attribute-name case-insensitively matches the string
     // "SameSite", the user agent MUST process the cookie-av as follows:
 
-    // 1. Let enforcement be "Default".
-    let enforcement = 'Default'
-
     const attributeValueLowercase = attributeValue.toLowerCase()
-    // 2. If cookie-av's attribute-value is a case-insensitive match for
-    //    "None", set enforcement to "None".
-    if (attributeValueLowercase.includes('none')) {
-      enforcement = 'None'
-    }
 
-    // 3. If cookie-av's attribute-value is a case-insensitive match for
-    //    "Strict", set enforcement to "Strict".
-    if (attributeValueLowercase.includes('strict')) {
-      enforcement = 'Strict'
+    // 1. If cookie-av's attribute-value is a case-insensitive match for
+    //    "None", append an attribute to the cookie-attribute-list with an
+    //    attribute-name of "SameSite" and an attribute-value of "None".
+    if (attributeValueLowercase === 'none') {
+      cookieAttributeList.sameSite = 'None'
+    } else if (attributeValueLowercase === 'strict') {
+      // 2. If cookie-av's attribute-value is a case-insensitive match for
+      //    "Strict", append an attribute to the cookie-attribute-list with
+      //    an attribute-name of "SameSite" and an attribute-value of
+      //    "Strict".
+      cookieAttributeList.sameSite = 'Strict'
+    } else if (attributeValueLowercase === 'lax') {
+      // 3. If cookie-av's attribute-value is a case-insensitive match for
+      //    "Lax", append an attribute to the cookie-attribute-list with an
+      //    attribute-name of "SameSite" and an attribute-value of "Lax".
+      cookieAttributeList.sameSite = 'Lax'
     }
-
-    // 4. If cookie-av's attribute-value is a case-insensitive match for
-    //    "Lax", set enforcement to "Lax".
-    if (attributeValueLowercase.includes('lax')) {
-      enforcement = 'Lax'
-    }
-
-    // 5. Append an attribute to the cookie-attribute-list with an
-    //    attribute-name of "SameSite" and an attribute-value of
-    //    enforcement.
-    cookieAttributeList.sameSite = enforcement
   } else {
     cookieAttributeList.unparsed ??= []
 
@@ -33409,6 +33943,11 @@ const { closeWebSocketConnection } = __nccwpck_require__(6897)
 const { PerMessageDeflate } = __nccwpck_require__(9469)
 const { MessageSizeExceededError } = __nccwpck_require__(8707)
 
+function failWebsocketConnectionWithCode (ws, code, reason) {
+  closeWebSocketConnection(ws, code, reason, Buffer.byteLength(reason))
+  failWebsocketConnection(ws, reason)
+}
+
 // This code was influenced by ws released under the MIT license.
 // Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com>
 // Copyright (c) 2013 Arnout Kazemier and contributors
@@ -33429,18 +33968,22 @@ class ByteParser extends Writable {
   #extensions
 
   /** @type {number} */
+  #maxFragments
+
+  /** @type {number} */
   #maxPayloadSize
 
   /**
    * @param {import('./websocket').WebSocket} ws
    * @param {Map<string, string>|null} extensions
-   * @param {{ maxPayloadSize?: number }} [options]
+   * @param {{ maxFragments?: number, maxPayloadSize?: number }} [options]
    */
   constructor (ws, extensions, options = {}) {
     super()
 
     this.ws = ws
     this.#extensions = extensions == null ? new Map() : extensions
+    this.#maxFragments = options.maxFragments ?? 0
     this.#maxPayloadSize = options.maxPayloadSize ?? 0
 
     if (this.#extensions.has('permessage-deflate')) {
@@ -33464,9 +34007,9 @@ class ByteParser extends Writable {
     if (
       this.#maxPayloadSize > 0 &&
       !isControlFrame(this.#info.opcode) &&
-      this.#info.payloadLength > this.#maxPayloadSize
+      this.#info.payloadLength + this.#fragmentsBytes > this.#maxPayloadSize
     ) {
-      failWebsocketConnection(this.ws, 'Payload size exceeds maximum allowed size')
+      failWebsocketConnectionWithCode(this.ws, 1009, 'Payload size exceeds maximum allowed size')
       return false
     }
 
@@ -33631,10 +34174,12 @@ class ByteParser extends Writable {
           this.#state = parserStates.INFO
         } else {
           if (!this.#info.compressed) {
-            this.writeFragments(body)
+            if (!this.writeFragments(body)) {
+              return
+            }
 
             if (this.#maxPayloadSize > 0 && this.#fragmentsBytes > this.#maxPayloadSize) {
-              failWebsocketConnection(this.ws, new MessageSizeExceededError().message)
+              failWebsocketConnectionWithCode(this.ws, 1009, new MessageSizeExceededError().message)
               return
             }
 
@@ -33653,14 +34198,17 @@ class ByteParser extends Writable {
               this.#info.fin,
               (error, data) => {
                 if (error) {
-                  failWebsocketConnection(this.ws, error.message)
+                  const code = error instanceof MessageSizeExceededError ? 1009 : 1007
+                  failWebsocketConnectionWithCode(this.ws, code, error.message)
                   return
                 }
 
-                this.writeFragments(data)
+                if (!this.writeFragments(data)) {
+                  return
+                }
 
                 if (this.#maxPayloadSize > 0 && this.#fragmentsBytes > this.#maxPayloadSize) {
-                  failWebsocketConnection(this.ws, new MessageSizeExceededError().message)
+                  failWebsocketConnectionWithCode(this.ws, 1009, new MessageSizeExceededError().message)
                   return
                 }
 
@@ -33730,8 +34278,17 @@ class ByteParser extends Writable {
   }
 
   writeFragments (fragment) {
+    if (
+      this.#maxFragments > 0 &&
+      this.#fragments.length === this.#maxFragments
+    ) {
+      failWebsocketConnectionWithCode(this.ws, 1008, 'Too many message fragments')
+      return false
+    }
+
     this.#fragmentsBytes += fragment.length
     this.#fragments.push(fragment)
+    return true
   }
 
   consumeFragments () {
@@ -34784,9 +35341,12 @@ class WebSocket extends EventTarget {
     // once this happens, the connection is open
     this[kResponse] = response
 
-    const maxPayloadSize = this[kController]?.dispatcher?.webSocketOptions?.maxPayloadSize
+    const webSocketOptions = this[kController]?.dispatcher?.webSocketOptions
+    const maxFragments = webSocketOptions?.maxFragments
+    const maxPayloadSize = webSocketOptions?.maxPayloadSize
 
     const parser = new ByteParser(this, parsedExtensions, {
+      maxFragments,
       maxPayloadSize
     })
     parser.on('drain', onParserDrain)
