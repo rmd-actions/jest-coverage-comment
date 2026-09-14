@@ -146,6 +146,62 @@ describe('get coverage report', () => {
     )
   })
 
+  test('should restore paths stripped by jest --changedSince', () => {
+    // istanbul strips 'src/clients' (the common parent of all covered files)
+    // from the text report, so links must be restored from the summary file
+    const optionsChangedSince = {
+      ...options,
+      coverageFile: `${__dirname}/../data/coverage_2/coverage.txt`,
+      summaryFile: `${__dirname}/../data/coverage_2/coverage-summary.json`,
+      prefix: '/home/runner/work/my-repo/my-repo/',
+    }
+    const { coverageHtml, coverage } = getCoverageReport(optionsChangedSince)
+
+    expect(coverage).toBe(84)
+    expect(coverageHtml).toContain('<td>src/clients/abc</td>')
+    expect(coverageHtml).toContain('<td>src/clients/def</td>')
+    expect(coverageHtml).toContain(
+      'https://github.com/MishaKav/jest-coverage-comment/blob/05953710b21d222efa4f4535424a7af367be5a57/src/clients/abc/responses.ts#L10-L12'
+    )
+    expect(coverageHtml).toContain(
+      'https://github.com/MishaKav/jest-coverage-comment/blob/05953710b21d222efa4f4535424a7af367be5a57/src/clients/def/helpers.ts#L5'
+    )
+  })
+
+  test('should render single changed file when report-only-changed-files is enabled', () => {
+    // flat report bucket has one file and no folder row, it must not be
+    // dropped by the "filter folders without files" heuristic
+    const optionsChangedFiles = {
+      ...options,
+      coverageFile: `${__dirname}/../data/coverage_3/coverage.txt`,
+      summaryFile: `${__dirname}/../data/coverage_3/coverage-summary.json`,
+      prefix: '/home/runner/work/my-repo/my-repo/',
+      reportOnlyChangedFiles: true,
+      changedFiles: { all: ['src/clients/abc/responses.ts'] },
+    }
+    const { coverageHtml } = getCoverageReport(optionsChangedFiles)
+
+    expect(coverageHtml).not.toContain('No files were changed')
+    expect(coverageHtml).toContain(
+      'https://github.com/MishaKav/jest-coverage-comment/blob/05953710b21d222efa4f4535424a7af367be5a57/src/clients/abc/responses.ts#L33'
+    )
+  })
+
+  test('should not restore stripped paths when coverage-path-prefix is provided', () => {
+    const optionsChangedSince = {
+      ...options,
+      coverageFile: `${__dirname}/../data/coverage_2/coverage.txt`,
+      summaryFile: `${__dirname}/../data/coverage_2/coverage-summary.json`,
+      prefix: '/home/runner/work/my-repo/my-repo/',
+      coveragePathPrefix: 'my-prefix/',
+    }
+    const { coverageHtml } = getCoverageReport(optionsChangedSince)
+
+    expect(coverageHtml).toContain(
+      'https://github.com/MishaKav/jest-coverage-comment/blob/05953710b21d222efa4f4535424a7af367be5a57/my-prefix/abc/responses.ts#L10-L12'
+    )
+  })
+
   test('should return default report', () => {
     const {
       coverageHtml,

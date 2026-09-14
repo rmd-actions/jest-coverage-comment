@@ -1,5 +1,14 @@
 # Changelog of the Jest Coverage Comment
 
+## [Jest Coverage Comment 1.0.35](https://github.com/MishaKav/jest-coverage-comment/tree/v1.0.35)
+
+**Release Date:** 2026-08-01
+
+#### Changes
+
+- fix broken links to files in coverage report when running Jest with `--changedSince` or `--findRelatedTests` (#89)
+- fix empty coverage report when `report-only-changed-files` is enabled and the report contains a single changed file
+
 ## [Jest Coverage Comment 1.0.34](https://github.com/MishaKav/jest-coverage-comment/tree/v1.0.34)
 
 **Release Date:** 2026-06-27
