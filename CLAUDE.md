@@ -13,7 +13,10 @@ The action follows a modular architecture:
 - **Main Entry**: `src/index.ts` - Orchestrates the entire workflow, gathering inputs and coordinating report generation
 - **Report Generators**: Separate modules for each report type (coverage, junit, summary, multi-file reports)
 - **Comment Management**: `src/create-comment.ts` handles GitHub API interactions for creating/updating PR comments
+- **Changed Files**: `src/changed-files.ts` queries the GitHub API for the files a PR touched, used for PR-only reporting
+- **Path Repair**: `src/fix-coverage-paths.ts` restores real file paths in coverage output so links resolve (matters for `jest --changedSince`)
 - **Utilities**: Helper functions in `src/utils.ts` for common operations
+- **Local Harness**: `src/cli.ts` runs the generators against the `data/` fixtures for local debugging; it is not part of the action runtime and is excluded from coverage
 
 The action supports multiple report formats:
 
@@ -54,6 +57,23 @@ npm run package
 
 # Run all checks (build, format, lint, package, test)
 npm run all
+```
+
+## Versioning and Changelog
+
+Every feature or fix PR must bump the version and update the changelog in the same PR:
+
+1. Bump the version with `npm version patch --no-git-tag-version` (updates `package.json` and `package-lock.json`; the action uses `1.0.x` patch increments for features and fixes alike)
+2. Add a new entry at the top of `CHANGELOG.md` in the existing format:
+
+```markdown
+## [Jest Coverage Comment 1.0.X](https://github.com/MishaKav/jest-coverage-comment/tree/v1.0.X)
+
+**Release Date:** YYYY-MM-DD
+
+#### Changes
+
+- short bullet per change, referencing issues/PRs like (#92)
 ```
 
 ## Testing

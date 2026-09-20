@@ -27,6 +27,8 @@ export interface Options {
   changedFiles?: ChangedFiles | null
   multipleFiles?: string[]
   multipleJunitFiles?: string[]
+  showFailedTests?: boolean
+  maxFailedTests?: number
 }
 
 export interface ChangedFiles {
@@ -68,10 +70,20 @@ export interface Junit {
   failures: number
   errors: number
   time: number
+  failedTests: FailedTest[] // calculated field
+}
+
+export interface FailedTest {
+  suiteName: string
+  testName: string
+  message: string
+  file?: string
+  line?: number
 }
 
 export interface JunitReport extends Junit {
   junitHtml: string
+  failedTestsHtml: string
 }
 
 export interface CoverageLine {

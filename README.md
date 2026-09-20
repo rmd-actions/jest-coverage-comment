@@ -4,6 +4,8 @@
 ![License](https://img.shields.io/github/license/MishaKav/jest-coverage-comment)
 ![Version](https://img.shields.io/github/package-json/v/MishaKav/jest-coverage-comment)
 [![WakaTime](https://wakatime.com/badge/user/f838c8aa-c197-42f0-b335-cd1d26159dfd/project/9b2410f3-4104-44ec-bd7f-8d2553a31ffb.svg)](https://wakatime.com/badge/user/f838c8aa-c197-42f0-b335-cd1d26159dfd/project/9b2410f3-4104-44ec-bd7f-8d2553a31ffb)
+[![GitHub Sponsors](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/MishaKav)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-%E2%98%95-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/MishaKav)
 
 A GitHub Action that adds Jest test coverage reports as comments to your pull requests, helping you track and improve test coverage with visual feedback.
 
@@ -36,6 +38,7 @@ A GitHub Action that adds Jest test coverage reports as comments to your pull re
     - [Coverage Summary Report](#coverage-summary-report)
     - [Coverage Console Report](#coverage-console-report)
     - [JUnit Test Report](#junit-test-report)
+    - [Show Failed Tests](#show-failed-tests)
     - [Multiple Files (Monorepo)](#multiple-files-monorepo)
     - [Matrix Strategy](#matrix-strategy)
     - [Workflow Dispatch Support](#workflow-dispatch-support)
@@ -60,6 +63,7 @@ A GitHub Action that adds Jest test coverage reports as comments to your pull re
   - [🤝 Contributing](#-contributing)
     - [Development Setup](#development-setup)
   - [👥 Contributors](#-contributors)
+  - [💖 Support This Project](#-support-this-project)
   - [📄 License](#-license)
   - [🔗 Similar Actions](#-similar-actions)
 
@@ -132,18 +136,20 @@ jobs:
 <details>
 <summary>🎨 Display Options</summary>
 
-| Name                    | Default           | Description                                                   |
-| ----------------------- | ----------------- | ------------------------------------------------------------- |
-| `title`                 |                   | Main title for the comment                                    |
-| `summary-title`         |                   | Title for the coverage summary                                |
-| `badge-title`           | `Coverage`        | Title for the badge icon                                      |
-| `text-instead-badge`    | `false`           | Use simple text instead of badge images for coverage display  |
-| `junitxml-title`        |                   | Title for summary for junitxml                                |
-| `coverage-title`        | `Coverage Report` | Title for the coverage report                                 |
-| `hide-summary`          | `false`           | Hide coverage summary report                                  |
-| `hide-comment`          | `false`           | Hide the whole comment (use when you need only the `output`)  |
-| `remove-links-to-files` | `false`           | Remove links to files (useful when summary-report is too big) |
-| `remove-links-to-lines` | `false`           | Remove links to lines (useful when summary-report is too big) |
+| Name                    | Default           | Description                                                                                                           |
+| ----------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `title`                 |                   | Main title for the comment                                                                                            |
+| `summary-title`         |                   | Title for the coverage summary                                                                                        |
+| `badge-title`           | `Coverage`        | Title for the badge icon                                                                                              |
+| `text-instead-badge`    | `false`           | Use simple text instead of badge images for coverage display                                                          |
+| `junitxml-title`        |                   | Title for summary for junitxml                                                                                        |
+| `show-failed-tests`     | `false`           | Show names of failed tests in the comment (requires `junitxml-path` or `multiple-junitxml-files`)                     |
+| `max-failed-tests`      | `30`              | Maximum number of failed tests to show in the comment, in total across all junit files (requires `show-failed-tests`) |
+| `coverage-title`        | `Coverage Report` | Title for the coverage report                                                                                         |
+| `hide-summary`          | `false`           | Hide coverage summary report                                                                                          |
+| `hide-comment`          | `false`           | Hide the whole comment (use when you need only the `output`)                                                          |
+| `remove-links-to-files` | `false`           | Remove links to files (useful when summary-report is too big)                                                         |
+| `remove-links-to-lines` | `false`           | Remove links to lines (useful when summary-report is too big)                                                         |
 
 </details>
 
@@ -166,20 +172,21 @@ jobs:
 <details>
 <summary>📤 Available Outputs</summary>
 
-| Name          | Example  | Description                                                                           |
-| ------------- | -------- | ------------------------------------------------------------------------------------- |
-| `coverage`    | `78`     | Percentage of the coverage, get from `coverage-summary.json`                          |
-| `color`       | `yellow` | Color of the percentage. You can see the whole list of [badge colors](#-badge-colors) |
-| `summaryHtml` | `...`    | Markdown table with summary. See the [result examples](#-result-examples)             |
-| `tests`       | `9`      | Total number of tests, get from `junitxml`                                            |
-| `skipped`     | `0`      | Total number of skipped tests, get from `junitxml`                                    |
-| `failures`    | `0`      | Total number of tests with failures, get from `junitxml`                              |
-| `errors`      | `0`      | Total number of tests with errors, get from `junitxml`                                |
-| `time`        | `2.883`  | Seconds that took to run all the tests, get from `junitxml`                           |
-| `lines`       | `71`     | Lines covered, get from Jest text report                                              |
-| `branches`    | `100`    | Branches covered, get from Jest text report                                           |
-| `functions`   | `28`     | Functions covered, get from Jest text report                                          |
-| `statements`  | `100`    | Statements covered, get from Jest text report                                         |
+| Name              | Example  | Description                                                                                                                                                                         |
+| ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `coverage`        | `78`     | Percentage of the coverage, get from `coverage-summary.json`                                                                                                                        |
+| `color`           | `yellow` | Color of the percentage. You can see the whole list of [badge colors](#-badge-colors)                                                                                               |
+| `summaryHtml`     | `...`    | Markdown table with summary. See the [result examples](#-result-examples)                                                                                                           |
+| `tests`           | `9`      | Total number of tests, get from `junitxml`                                                                                                                                          |
+| `skipped`         | `0`      | Total number of skipped tests, get from `junitxml`                                                                                                                                  |
+| `failures`        | `0`      | Total number of tests with failures, get from `junitxml`                                                                                                                            |
+| `errors`          | `0`      | Total number of tests with errors, get from `junitxml`                                                                                                                              |
+| `time`            | `2.883`  | Seconds that took to run all the tests, get from `junitxml`                                                                                                                         |
+| `failedTestsHtml` | `...`    | Collapsible block with names of failed tests, get from `junitxml`. Empty when `show-failed-tests` is disabled or there are no failures; not published for `multiple-junitxml-files` |
+| `lines`           | `71`     | Lines covered, get from Jest text report                                                                                                                                            |
+| `branches`        | `100`    | Branches covered, get from Jest text report                                                                                                                                         |
+| `functions`       | `28`     | Functions covered, get from Jest text report                                                                                                                                        |
+| `statements`      | `100`    | Statements covered, get from Jest text report                                                                                                                                       |
 
 </details>
 
@@ -338,6 +345,58 @@ Workflow:
 **Output**: Table showing tests count, skipped, failures, errors, and execution time.
 
 <img alt="JUnit Report (Single File)" width="400px" src="https://user-images.githubusercontent.com/289035/161068120-303b47a9-c8e2-4fa6-80db-21aefbf9033b.png">
+
+</details>
+
+### Show Failed Tests
+
+<details>
+<summary>Show names of failed tests in the comment</summary>
+
+Requires `junitxml-path` (or `multiple-junitxml-files`), see [JUnit Test Report](#junit-test-report):
+
+```yaml
+- name: Jest Coverage Comment
+  uses: MishaKav/jest-coverage-comment@main
+  with:
+    junitxml-path: ./coverage/junit.xml
+    junitxml-title: Test Results
+    show-failed-tests: true
+```
+
+**Output**: Collapsible section (collapsed by default in the comment, expanded below for the example) with one line per failed test — the suite name links to the test file (when the location can be resolved from the report) followed by a short failure reason. Clicking a test expands the jest failure output as a `diff` code block with red/green highlighting (stack traces are stripped, very long messages are truncated). The section appears **only when there are failed tests** — on a green run the comment stays exactly the same as without this option.
+
+<details open><summary>:x: Failed Tests (<b>2</b>)</summary>
+
+<details><summary><b>PostsService</b> › maps the API response to posts — <code>- "title": "my first post" · + "title": "first post"</code></summary>
+
+```diff
+expect(received).toEqual(expected) // deep equality
+
+- Expected  - 1
++ Received  + 1
+
+  Array [
+    Object {
+      "id": 1,
+-     "title": "my first post",
++     "title": "first post",
+    },
+  ]
+```
+
+</details>
+<details><summary><b>PostsService</b> › fetches a single post by id — <code>TypeError: Service.getPostById is not a function</code></summary>
+
+```diff
+TypeError: Service.getPostById is not a function
+```
+
+</details>
+
+</details>
+
+With `multiple-junitxml-files`, a separate collapsible section is added for every file that has failures, labeled with the file's title.
 
 </details>
 
@@ -738,6 +797,24 @@ npm run package
   <img src="https://contrib.rocks/image?repo=MishaKav/jest-coverage-comment" alt="Contributors" />
 </a>
 
+## 💖 Support This Project
+
+Jest Coverage Comment is free and open source, and I maintain it in my spare time. If it saves you time or makes your pull requests nicer, consider supporting its continued development:
+
+<div align="center">
+
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-%E2%9D%A4-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/MishaKav)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-%E2%98%95-ffdd00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/MishaKav)
+[![PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/MishaKav)
+
+</div>
+
+- 💖 **[GitHub Sponsors](https://github.com/sponsors/MishaKav)** - Monthly or one-time sponsorship, works with company billing
+- ☕ **[Buy Me a Coffee](https://buymeacoffee.com/MishaKav)** - A quick one-off thanks
+- 💳 **[PayPal](https://paypal.me/MishaKav)** - Direct donation
+
+Not in a position to donate? Giving the project a ⭐, reporting a bug, or sharing it with your team helps just as much.
+
 ## 📄 License
 
 MIT © [Misha Kav](https://github.com/MishaKav)
@@ -753,6 +830,6 @@ Check out [pytest-coverage-comment](https://github.com/marketplace/actions/pytes
 
 <div align="center">
 
-**If you find this action helpful, please consider giving it a ⭐ on [GitHub](https://github.com/MishaKav/jest-coverage-comment)!**
+**If you find this action helpful, please consider giving it a ⭐ on [GitHub](https://github.com/MishaKav/jest-coverage-comment) or [buying me a coffee ☕](https://buymeacoffee.com/MishaKav)!**
 
 </div>
