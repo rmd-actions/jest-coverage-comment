@@ -13,7 +13,10 @@ The action follows a modular architecture:
 - **Main Entry**: `src/index.ts` - Orchestrates the entire workflow, gathering inputs and coordinating report generation
 - **Report Generators**: Separate modules for each report type (coverage, junit, summary, multi-file reports)
 - **Comment Management**: `src/create-comment.ts` handles GitHub API interactions for creating/updating PR comments
+- **Changed Files**: `src/changed-files.ts` queries the GitHub API for the files a PR touched, used for PR-only reporting
+- **Path Repair**: `src/fix-coverage-paths.ts` restores real file paths in coverage output so links resolve (matters for `jest --changedSince`)
 - **Utilities**: Helper functions in `src/utils.ts` for common operations
+- **Local Harness**: `src/cli.ts` runs the generators against the `data/` fixtures for local debugging; it is not part of the action runtime and is excluded from coverage
 
 The action supports multiple report formats:
 
@@ -58,7 +61,7 @@ npm run all
 
 ## Versioning and Changelog
 
-Every feature or fix PR must bump the version and update the changelog in the same PR — don't forget this step:
+Every feature or fix PR must bump the version and update the changelog in the same PR:
 
 1. Bump the version with `npm version patch --no-git-tag-version` (updates `package.json` and `package-lock.json`; the action uses `1.0.x` patch increments for features and fixes alike)
 2. Add a new entry at the top of `CHANGELOG.md` in the existing format:
@@ -96,4 +99,10 @@ The project uses Jest with TypeScript support:
 
 **Coverage Calculation**: Uses Jest's `coverage-summary.json` for percentage calculations, with color-coded badges based on thresholds (0-40: red, 40-60: orange, 60-80: yellow, 80-90: green, 90-100: brightgreen)
 
-**File Path Handling**: The action handles both absolute and relative paths, with configurable path prefixes for linking to files in GitHub
+**File Path Handling**: The action handles both absolute and relative paths, with configurable path prefixes for linking to files in GitHub. Coverage table links go through `toFileHref` (coverage.ts): segments are url-encoded, `\` becomes `/`, and a path with `..` or an absolute path outside the workspace is shown without a link
+
+**Output Format**: Report contents (file and folder names, numbers, test names) are untrusted, e.g. from a fork PR. Workflow inputs (titles, unique id) are the workflow author's configuration and are used as is; a workflow that passes event data (e.g. a PR title) into them has to sanitize it itself:
+
+- HTML: escape report values with `escapeHtml` / `escapeHtmlAttr` (utils.ts). The coverage report is one line that starts with `<!-- jest-coverage-comment -->`, so GitHub treats it as a raw HTML block: no markdown inside, and the next line renders as markdown again (a `<details>` or `<div>` block would run until a blank line). Never emit a line break inside it
+- Markdown table cells (summary, `multiple-files`): escape report values with `escapeMarkdown` (utils.ts); a `|` or a line break would break the table
+- The badge and its color only take a plain number (`isPlainNumber`), anything else is `0`
