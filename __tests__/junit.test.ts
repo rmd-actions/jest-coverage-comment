@@ -191,6 +191,34 @@ describe('failed tests to markdown', () => {
     )
   })
 
+  test('should still link a test file with a lone surrogate', () => {
+    const html = failedTestsToMarkdown(
+      [{ ...failedTest, file: 'src/\ud800.test.js' }],
+      optionsWithRepo
+    )
+
+    expect(html).toContain(
+      '<a href="https://github.com/MishaKav/jest-coverage-comment/blob/05953710b21d222efa4f4535424a7af367be5a57/src/%EF%BF%BD.test.js">suite A</a>'
+    )
+  })
+
+  test('should keep test names on the summary line', () => {
+    const html = failedTestsToMarkdown(
+      [
+        {
+          suiteName: 'suite\n\n**A**',
+          testName: 'suite\n\n**A** test\r\rone',
+          message: 'boom',
+        },
+      ],
+      options
+    )
+
+    expect(html).toContain(
+      '<details><summary><b>suite **A**</b> › test one — <code>boom</code></summary>'
+    )
+  })
+
   test('should escape html in test names and reason, keep messages verbatim', () => {
     const html = failedTestsToMarkdown(
       [

@@ -13,6 +13,62 @@ export function getFileUrl(
   return `${serverUrl}/${repository}/blob/${commit}/${relativePath}${anchor}`
 }
 
+/** Escape characters that are unsafe inside generated html. */
+export function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/** Escape a value placed inside a double-quoted html attribute. */
+export function escapeHtmlAttr(text: string): string {
+  return escapeHtml(text).replace(/"/g, '&quot;')
+}
+
+/** A plain non-negative number, e.g. `78.57`. */
+export function isPlainNumber(text: string): boolean {
+  return /^\d+(\.\d+)?$/.test(text)
+}
+
+/** Replace line breaks with a space, e.g. to keep a value on one line. */
+export function stripLineBreaks(text: string): string {
+  return text.replace(/[\r\n]+/g, ' ')
+}
+
+/**
+ * Escape a value for a markdown table cell: line breaks become spaces, ascii
+ * punctuation is backslash-escaped (no markdown, `|`, autolinks) and `&<>`
+ * become entities. A plain number stays as is.
+ */
+export function escapeMarkdown(value: string | number): string {
+  const text = String(value)
+
+  if (isPlainNumber(text)) {
+    return text
+  }
+
+  return escapeHtml(
+    stripLineBreaks(text).replace(/[!-%'-/:;=?@[-`{-~]/g, '\\$&')
+  )
+}
+
+/** A unix (`/home/...`) or windows (`C:/...`) absolute path, with `/` separators. */
+export const ABSOLUTE_PATH_REGEX = /^(\/|[A-Za-z]:\/)/
+
+/**
+ * Encode url-reserved characters in each path segment, keep `/` separators.
+ * (toWellFormed: a lone utf-16 surrogate makes encodeURIComponent throw)
+ */
+export function encodePath(path: string): string {
+  return path
+    .split('/')
+    .map((segment) => encodeURIComponent(segment.toWellFormed()))
+    .join('/')
+}
+
+/** A `..` segment would let a link leave the repo once the browser resolves it. */
+export function hasParentSegment(path: string): boolean {
+  return path.split('/').includes('..')
+}
+
 export function getPathToFile(pathToFile: string): string {
   if (!pathToFile) {
     return ''

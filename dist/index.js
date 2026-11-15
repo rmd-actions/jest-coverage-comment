@@ -241,7 +241,11 @@ function coverageToMarkdown(coverageArr, options) {
     const table = toTable(coverageArr, options);
     const onlyChanged = reportOnlyChangedFiles ? '• ' : '';
     const reportHtml = `<details><summary>${coverageTitle} ${onlyChanged}(<b>${coverage}%</b>)</summary>${table}</details>`;
-    return reportHtml;
+    // a line starting with an html comment is a raw html block, so github
+    // doesn't parse markdown in the table cells. The block ends with the line,
+    // so text after it (e.g. in a readme) still renders as markdown, and a line
+    // break (e.g. from a report value) must not end the block early
+    return `<!-- jest-coverage-comment -->${(0, utils_1.stripLineBreaks)(reportHtml)}`;
 }
 /** Get coverage and color from CoverageLine[]. */
 function getCoverage(coverageArr) {
@@ -301,12 +305,14 @@ function toTable(coverageArr, options) {
 function toHeadRow() {
     return '<tr><th>File</th><th>% Stmts</th><th>% Branch</th><th>% Funcs</th><th>% Lines</th><th>Uncovered Line #s</th></tr>';
 }
-/** Make html row - tr. */
+/** Make html row - tr. Report values are untrusted (e.g. from a fork PR), so they are escaped. */
 function toRow(line, indent = false, options) {
     const { stmts, branch, funcs, lines } = line;
-    const fileName = toFileNameTd(line, indent, options);
-    const missing = toMissingTd(line, options);
-    return `<tr><td>${(0, parse_coverage_1.isFolder)(line) ? line.file : fileName}</td><td>${stmts}</td><td>${branch}</td><td>${funcs}</td><td>${lines}</td><td>${missing}</td></tr>`;
+    // one link per row, shared by the file name and the uncovered lines
+    const fileHref = toFileHref(line, options);
+    const fileName = toFileNameTd(line, indent, options, options.removeLinksToFiles ? null : fileHref);
+    const missing = toMissingTd(line, options.removeLinksToLines ? null : fileHref);
+    return `<tr><td>${(0, parse_coverage_1.isFolder)(line) ? (0, utils_1.escapeHtmlAttr)(line.file) : fileName}</td><td>${stmts}</td><td>${branch}</td><td>${funcs}</td><td>${lines}</td><td>${missing}</td></tr>`;
 }
 /** Make summary row - tr. */
 function toTotalRow(line) {
@@ -314,45 +320,66 @@ function toTotalRow(line) {
         return '&nbsp;';
     }
     const { file, stmts, branch, funcs, lines } = line;
-    return `<tr><td><b>${file}</b></td><td><b>${stmts}</b></td><td><b>${branch}</b></td><td><b>${funcs}</b></td><td><b>${lines}</b></td><td>&nbsp;</td></tr>`;
+    return `<tr><td><b>${(0, utils_1.escapeHtmlAttr)(file)}</b></td><td><b>${stmts}</b></td><td><b>${branch}</b></td><td><b>${funcs}</b></td><td><b>${lines}</b></td><td>&nbsp;</td></tr>`;
+}
+/** Path of a report line relative to the repo root. */
+function toRelativePath(line, options) {
+    return line.file.replace(options.prefix, '');
+}
+/** Link to a file of the report in the repo, null when it can't be linked safely. */
+function toFileHref(line, options) {
+    const { prefix, coveragePathPrefix = '' } = options;
+    // windows reports use `\`, browsers treat it as `/` in links
+    const relative = line.file
+        .replace(/\\/g, '/')
+        .replace(prefix.replace(/\\/g, '/'), '');
+    // a path outside the workspace or with a `..` segment doesn't point into the repo
+    if (utils_1.ABSOLUTE_PATH_REGEX.test(relative) || (0, utils_1.hasParentSegment)(relative)) {
+        return null;
+    }
+    return (0, utils_1.getFileUrl)(options, `${coveragePathPrefix}${(0, utils_1.encodePath)(relative)}`);
 }
 /** Make fileName cell - td. */
-function toFileNameTd(line, indent = false, options) {
-    const { prefix, coveragePathPrefix = '', removeLinksToFiles } = options;
-    const relative = line.file.replace(prefix, '');
-    const href = (0, utils_1.getFileUrl)(options, `${coveragePathPrefix}${relative}`);
-    const parts = relative.split('/');
+function toFileNameTd(line, indent = false, options, href) {
+    const parts = toRelativePath(line, options).split('/');
     const last = parts[parts.length - 1];
     const space = indent ? '&nbsp; &nbsp;' : '';
-    return removeLinksToFiles
-        ? `${space}${last}`
-        : `${space}<a href="${href}">${last}</a>`;
+    const fileName = (0, utils_1.escapeHtmlAttr)(last);
+    return href
+        ? `${space}<a href="${(0, utils_1.escapeHtmlAttr)(href)}">${fileName}</a>`
+        : `${space}${fileName}`;
 }
 /** Make missing cell - td. */
-function toMissingTd(line, options) {
+function toMissingTd(line, href) {
     if (!line.uncoveredLines?.length) {
         return '&nbsp;';
     }
+    const fileHref = href && (0, utils_1.escapeHtmlAttr)(href);
+    // line numbers come from the report, encode them like the path
+    const encode = (value) => encodeURIComponent(value.toWellFormed());
     return line.uncoveredLines
         .map((range) => {
-        const { prefix, coveragePathPrefix = '', removeLinksToLines } = options;
         const [start, end = start] = range.split('-');
-        const fragment = start === end ? `L${start}` : `L${start}-L${end}`;
-        const relative = line.file.replace(prefix, '');
-        const href = (0, utils_1.getFileUrl)(options, `${coveragePathPrefix}${relative}`, `#${fragment}`);
-        const text = start === end ? start : `${start}&ndash;${end}`;
-        return removeLinksToLines ? text : `<a href="${href}">${text}</a>`;
+        const single = start === end;
+        const fragment = single
+            ? `L${encode(start)}`
+            : `L${encode(start)}-L${encode(end)}`;
+        const text = single
+            ? (0, utils_1.escapeHtmlAttr)(start)
+            : `${(0, utils_1.escapeHtmlAttr)(start)}&ndash;${(0, utils_1.escapeHtmlAttr)(end)}`;
+        return fileHref ? `<a href="${fileHref}#${fragment}">${text}</a>` : text;
     })
         .join(', ');
 }
 /** Collapse all lines to folders structure. */
 function makeFolders(coverageArr, options) {
-    const folders = {};
+    // no prototype, a folder named e.g. `constructor` must not hit Object members
+    const folders = Object.create(null);
     for (const line of coverageArr) {
         if (line.file === 'All files') {
             continue;
         }
-        const parts = line.file.replace(options.prefix, '').split('/');
+        const parts = toRelativePath(line, options).split('/');
         const folder = (0, parse_coverage_1.isFile)(line) ? parts.slice(0, -1).join('/') : line.file;
         folders[folder] = folders[folder] || [];
         folders[folder].push(line);
@@ -1039,15 +1066,10 @@ const MAX_FAILURE_MESSAGE_LINES = 15;
 const MAX_REASON_LENGTH = 120;
 const MAX_TEST_NAME_LENGTH = 255;
 exports.MAX_FAILED_TESTS = 30;
-const ABSOLUTE_PATH_REGEX = /^(\/|[A-Za-z]:\/)/;
 // Guard memory on huge failure outputs, rendering truncates far below this
 const MAX_STORED_MESSAGE_LENGTH = 10000;
 const STACK_FRAME_REGEX = /^\s+at\s/;
 const TEST_FILE_REGEX = /(__tests__[\\/]|\.(test|spec)\.[cm]?[jt]sx?$)/;
-/** Escape characters that are unsafe inside generated html. */
-function escapeHtml(text) {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 /**
  * Extract texts from <failure> or <error> node.
  * xml2js parses a node without attributes to a plain string,
@@ -1068,10 +1090,6 @@ function getNodeTexts(node) {
 /** Truncate text with ellipsis when it exceeds the given length. */
 function truncateText(text, maxLength) {
     return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
-}
-/** Encode url-reserved characters in each path segment, keep `/` separators. */
-function encodePath(path) {
-    return path.split('/').map(encodeURIComponent).join('/');
 }
 /** Remove stack-trace frame lines from failure text. */
 function stripStackFrames(text) {
@@ -1270,35 +1288,37 @@ ${table}`;
  */
 function toTestName(test, options) {
     const { repository, commit, prefix = '', removeLinksToFiles, removeLinksToLines, } = options;
-    const { suiteName, testName } = test;
+    // a line break would end the html block of the summary line
+    const suiteName = (0, utils_1.stripLineBreaks)(test.suiteName);
+    const testName = (0, utils_1.stripLineBreaks)(test.testName);
     const hasSuitePrefix = suiteName && testName.startsWith(suiteName);
     const mainText = truncateText(suiteName || testName, MAX_TEST_NAME_LENGTH);
     const restText = suiteName && testName !== suiteName
-        ? ` › ${escapeHtml(truncateText(hasSuitePrefix ? testName.slice(suiteName.length).trim() : testName, Math.max(0, MAX_TEST_NAME_LENGTH - mainText.length)))}`
+        ? ` › ${(0, utils_1.escapeHtml)(truncateText(hasSuitePrefix ? testName.slice(suiteName.length).trim() : testName, Math.max(0, MAX_TEST_NAME_LENGTH - mainText.length)))}`
         : '';
     const testFile = test.file
         ?.replace(/^file:\/\/\/([A-Za-z]:\/)/, '$1')
         .replace(/^file:\/\//, '')
         .replace(/\\/g, '/');
-    const isAbsolutePath = testFile ? ABSOLUTE_PATH_REGEX.test(testFile) : false;
+    const isAbsolutePath = testFile ? utils_1.ABSOLUTE_PATH_REGEX.test(testFile) : false;
     // Absolute stack-trace paths are repo-relative after removing the
     // workspace prefix, `coverage-path-prefix` applies only to relative ones
     const relative = testFile && isAbsolutePath && prefix
         ? testFile.replace(prefix.replace(/\\/g, '/'), '')
         : testFile;
     const cannotResolvePath = !relative ||
-        (isAbsolutePath && ABSOLUTE_PATH_REGEX.test(relative)) ||
-        relative.split('/').includes('..');
+        (isAbsolutePath && utils_1.ABSOLUTE_PATH_REGEX.test(relative)) ||
+        (0, utils_1.hasParentSegment)(relative);
     if (!repository || !commit || removeLinksToFiles || cannotResolvePath) {
-        return `<b>${escapeHtml(mainText)}</b>${restText}`;
+        return `<b>${(0, utils_1.escapeHtml)(mainText)}</b>${restText}`;
     }
     // `coverage-path-prefix` applies only to paths that are still repo-relative
     const linkPath = isAbsolutePath
-        ? encodePath(relative)
-        : `${options.coveragePathPrefix ?? ''}${encodePath(relative)}`;
+        ? (0, utils_1.encodePath)(relative)
+        : `${options.coveragePathPrefix ?? ''}${(0, utils_1.encodePath)(relative)}`;
     const anchor = test.line && !removeLinksToLines ? `#L${test.line}` : '';
-    const href = escapeHtml((0, utils_1.getFileUrl)(options, linkPath, anchor)).replace(/"/g, '&quot;');
-    return `<a href="${href}">${escapeHtml(mainText)}</a>${restText}`;
+    const href = (0, utils_1.escapeHtmlAttr)((0, utils_1.getFileUrl)(options, linkPath, anchor));
+    return `<a href="${href}">${(0, utils_1.escapeHtml)(mainText)}</a>${restText}`;
 }
 /** Convert failed tests to collapsed html table. */
 function failedTestsToMarkdown(failedTests, options, title, maxFailedTests = options.maxFailedTests ?? exports.MAX_FAILED_TESTS) {
@@ -1309,12 +1329,12 @@ function failedTestsToMarkdown(failedTests, options, title, maxFailedTests = opt
     const entries = failedTests.slice(0, maxFailedTests).map((test) => {
         const message = formatFailureMessage(test.message);
         const reason = extractShortReason(message);
-        return `<details><summary>${toTestName(test, options)} — <code>${escapeHtml(reason)}</code></summary>\n\n${messageToDiffBlock(message)}\n\n</details>`;
+        return `<details><summary>${toTestName(test, options)} — <code>${(0, utils_1.escapeHtml)(reason)}</code></summary>\n\n${messageToDiffBlock(message)}\n\n</details>`;
     });
     if (failedTests.length > maxFailedTests) {
         entries.push(moreFailedTestsNote(failedTests.length - maxFailedTests));
     }
-    return `<details><summary>:x: ${escapeHtml(summaryTitle)} (<b>${failedTests.length}</b>)</summary>\n\n${entries.join('\n')}\n\n</details>`;
+    return `<details><summary>:x: ${(0, utils_1.escapeHtml)(summaryTitle)} (<b>${failedTests.length}</b>)</summary>\n\n${entries.join('\n')}\n\n</details>`;
 }
 /** Return JUnit report. */
 async function getJunitReport(options) {
@@ -1715,8 +1735,9 @@ function lineSummaryToTd(line) {
     if (!line.pct) {
         return '';
     }
+    // report values are untrusted (e.g. from a fork PR)
     const { total, covered, pct } = line;
-    return `${pct}% (${covered}/${total})`;
+    return `${(0, utils_1.escapeMarkdown)(pct)}% (${(0, utils_1.escapeMarkdown)(covered)}/${(0, utils_1.escapeMarkdown)(total)})`;
 }
 /** Convert summary to md. */
 function summaryToMarkdown(summary, options, withoutHeader = false) {
@@ -1748,9 +1769,14 @@ function getCoverage(summary) {
     if (!summary?.lines) {
         return { coverage: 0, color: 'red' };
     }
-    const { lines } = summary;
-    const color = (0, utils_1.getCoverageColor)(lines.pct);
-    const coverage = parseInt(lines.pct.toString());
+    // report values are untrusted, only a number may reach the badge,
+    // other text could fake its message or color
+    const pct = String(summary.lines.pct);
+    // a very long digit string parses to Infinity
+    const parsed = (0, utils_1.isPlainNumber)(pct) ? Number(pct) : 0;
+    const value = Number.isFinite(parsed) ? parsed : 0;
+    const color = (0, utils_1.getCoverageColor)(value);
+    const coverage = Math.trunc(value);
     return { color, coverage };
 }
 /** Return full html coverage report and coverage percentage. */
@@ -1837,8 +1863,15 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.parseLine = void 0;
+exports.parseLine = exports.ABSOLUTE_PATH_REGEX = void 0;
 exports.getFileUrl = getFileUrl;
+exports.escapeHtml = escapeHtml;
+exports.escapeHtmlAttr = escapeHtmlAttr;
+exports.isPlainNumber = isPlainNumber;
+exports.stripLineBreaks = stripLineBreaks;
+exports.escapeMarkdown = escapeMarkdown;
+exports.encodePath = encodePath;
+exports.hasParentSegment = hasParentSegment;
 exports.getPathToFile = getPathToFile;
 exports.getContentFile = getContentFile;
 exports.getCoverageColor = getCoverageColor;
@@ -1849,6 +1882,50 @@ const fs_1 = __nccwpck_require__(9896);
 function getFileUrl(options, relativePath, anchor = '') {
     const { serverUrl = 'https://github.com', repository, commit } = options;
     return `${serverUrl}/${repository}/blob/${commit}/${relativePath}${anchor}`;
+}
+/** Escape characters that are unsafe inside generated html. */
+function escapeHtml(text) {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+/** Escape a value placed inside a double-quoted html attribute. */
+function escapeHtmlAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;');
+}
+/** A plain non-negative number, e.g. `78.57`. */
+function isPlainNumber(text) {
+    return /^\d+(\.\d+)?$/.test(text);
+}
+/** Replace line breaks with a space, e.g. to keep a value on one line. */
+function stripLineBreaks(text) {
+    return text.replace(/[\r\n]+/g, ' ');
+}
+/**
+ * Escape a value for a markdown table cell: line breaks become spaces, ascii
+ * punctuation is backslash-escaped (no markdown, `|`, autolinks) and `&<>`
+ * become entities. A plain number stays as is.
+ */
+function escapeMarkdown(value) {
+    const text = String(value);
+    if (isPlainNumber(text)) {
+        return text;
+    }
+    return escapeHtml(stripLineBreaks(text).replace(/[!-%'-/:;=?@[-`{-~]/g, '\\$&'));
+}
+/** A unix (`/home/...`) or windows (`C:/...`) absolute path, with `/` separators. */
+exports.ABSOLUTE_PATH_REGEX = /^(\/|[A-Za-z]:\/)/;
+/**
+ * Encode url-reserved characters in each path segment, keep `/` separators.
+ * (toWellFormed: a lone utf-16 surrogate makes encodeURIComponent throw)
+ */
+function encodePath(path) {
+    return path
+        .split('/')
+        .map((segment) => encodeURIComponent(segment.toWellFormed()))
+        .join('/');
+}
+/** A `..` segment would let a link leave the repo once the browser resolves it. */
+function hasParentSegment(path) {
+    return path.split('/').includes('..');
 }
 function getPathToFile(pathToFile) {
     if (!pathToFile) {
@@ -45209,6 +45286,9 @@ legacyRestEndpointMethods.VERSION = VERSION;
 /******/ 	}
 /******/ 	
 /************************************************************************/
+/******/ 	/* webpack/runtime/asset-relocator-loader */
+/******/ 	if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = __dirname + "/";
+/******/ 	
 /******/ 	/* webpack/runtime/define property getters */
 /******/ 	(() => {
 /******/ 		// define getter functions for harmony exports
@@ -45236,10 +45316,6 @@ legacyRestEndpointMethods.VERSION = VERSION;
 /******/ 			Object.defineProperty(exports, '__esModule', { value: true });
 /******/ 		};
 /******/ 	})();
-/******/ 	
-/******/ 	/* webpack/runtime/compat */
-/******/ 	
-/******/ 	if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = __dirname + "/";
 /******/ 	
 /************************************************************************/
 /******/ 	
